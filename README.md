@@ -157,3 +157,7 @@ FAKELENS/
 - All original files (`resources/` and `dontdelte.py`) are strictly preserved.
 - No backend code was fabricated or falsely claimed as live.
 - Verification-dependent actions indicate clear backend-readiness requirements.
+
+
+## Backend API
+A FastAPI backend is included in `backend/`. See `backend/README.md` for endpoints, local setup, deployment and limitations. The frontend is not yet wired to all backend endpoints.
