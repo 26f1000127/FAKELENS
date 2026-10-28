@@ -9,15 +9,17 @@ from __future__ import annotations
 
 import hmac
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from spyglass import ingest, review as reviewmod
+from spyglass import ingest, parse as parsing, review as reviewmod
 from spyglass.config import settings
-from spyglass.db import connect, init_schema, new_id, write_txn
+from spyglass.db import connect, init_schema, load_json, new_id, write_txn
 
 
 @asynccontextmanager
@@ -27,6 +29,22 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Brand Governance RAG Backend", version="1.0.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8100",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> None:
@@ -157,6 +175,44 @@ def create_review(company_id: str, body: ReviewIn, _: None = Depends(require_api
     return {"review_id": info["id"], "status": "queued", "company_id": company_id}
 
 
+@app.post("/companies/{company_id}/reviews/upload", status_code=200)
+async def create_review_file(
+    company_id: str,
+    file: Annotated[UploadFile, File()],
+    title: Annotated[str | None, Form()] = None,
+    _: None = Depends(require_api_key),
+) -> dict:
+    """Accept a document file (PDF/DOCX/TXT/MD), parse its content, and run the review pipeline."""
+    _ensure_company(company_id)
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 25 MiB)")
+
+    storage_dir = Path(".data/tmp_reviews") / company_id
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    filename = file.filename or "upload.txt"
+    tmp_path = storage_dir / f"{new_id('tmp')}_{filename}"
+    tmp_path.write_bytes(data)
+    try:
+        parsed = parsing.parse_document(tmp_path)
+        content_text = parsed.full_text
+        content_title = (title or "").strip() or parsed.title[:200] or Path(filename).stem
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    if not content_text.strip():
+        raise HTTPException(status_code=400, detail="Could not extract text from uploaded file")
+
+    info = reviewmod.create_review(company_id, content_title, content_text)
+    reviewmod.execute_review_safe(info["id"])
+    payload = reviewmod.get_review_payload(info["id"])
+    if payload:
+        return payload
+    return {"review_id": info["id"], "status": "queued", "company_id": company_id}
+
+
 @app.get("/companies/{company_id}/reviews/{review_id}")
 def get_review(company_id: str, review_id: str, _: None = Depends(require_api_key)) -> Any:
     _ensure_company(company_id)
@@ -174,13 +230,26 @@ def list_reviews(company_id: str, _: None = Depends(require_api_key)) -> dict:
     conn = connect()
     try:
         rows = conn.execute(
-            "SELECT id, status, overall_status, content_title, created_at, completed_at"
+            "SELECT id, status, overall_status, content_title, summary, result_json, created_at, completed_at"
             " FROM reviews WHERE company_id=? ORDER BY created_at DESC LIMIT 200",
             (company_id,),
         ).fetchall()
+        reviews = []
+        for r in rows:
+            d = dict(r)
+            raw_json = d.pop("result_json", None)
+            if raw_json:
+                parsed = load_json(raw_json, {})
+                if parsed:
+                    d["severity_counts"] = parsed.get("severity_counts")
+                    d["summary"] = parsed.get("summary", d.get("summary"))
+                    d["findings_count"] = len(parsed.get("findings", []))
+                    d["findings"] = parsed.get("findings", [])
+                    d["suggested_fixes_count"] = len([f for f in parsed.get("findings", []) if f.get("suggestion")])
+            reviews.append(d)
+        return {"reviews": reviews}
     finally:
         conn.close()
-    return {"reviews": [dict(r) for r in rows]}
 
 
 @app.get("/health")

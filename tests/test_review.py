@@ -222,3 +222,21 @@ def test_auth_required(client: TestClient, tmp_path: pathlib.Path) -> None:
     r = client.post(f"/companies/{company_id}/reviews", json={"title": "x", "content": "hi"},
                     headers={"X-API-Key": "wrong"})
     assert r.status_code == 401
+
+
+def test_review_upload_file(acme_client, tmp_path: pathlib.Path) -> None:
+    client, company_id, uploads = acme_client
+    post_md = tmp_path / "post.md"
+    post_md.write_text("# Acme Launch\nOur AcmeBean product has revolutionary performance.", encoding="utf-8")
+    with post_md.open("rb") as f:
+        r = client.post(
+            f"/companies/{company_id}/reviews/upload",
+            files={"file": ("post.md", f, "text/markdown")},
+            data={"title": "Acme Launch Post"},
+        )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["status"] == "completed"
+    assert data["content_title"] == "Acme Launch Post"
+    assert any("revolutionary" in f["quote"] for f in data["findings"])
+
