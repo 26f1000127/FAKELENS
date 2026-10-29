@@ -4,7 +4,6 @@ FastAPI backend MVP for FAKELENS, including JWT registration/login, text audit s
 
 ## Run locally (Windows)
 1. Install Python 3.10+.
-2. Open terminal in this `backend` folder.
 3. Run:
    ```powershell
    py -m venv .venv
