@@ -6,12 +6,13 @@ FastAPI backend MVP for FAKELENS, including JWT registration/login, text audit s
 1. Install Python 3.10+.
 3. Run:
    ```powershell
-   py -m venv .venv
-   .venv\Scripts\activate
-   pip install -r requirements.txt
-   $env:JWT_SECRET="use-a-long-random-secret-for-local-testing"
-   uvicorn main:app --reload
-   ```
+   
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+$env:JWT_SECRET="use-a-long-random-secret-for-local-testing"
+python -m uvicorn main:app --reload
+ ```
 4. Open `http://127.0.0.1:8000/docs`.
 5. Register at `POST /api/auth/register`, then click **Authorize** and enter `Bearer <accessToken>`.
 
